@@ -29,11 +29,16 @@ namespace Word2Vec.Net
         private readonly int _binary;
         private readonly int _cbow;
         private readonly int _debugMode;
-        private readonly int _window;
+        //private readonly int _window;
         private readonly int _minCount;
         private readonly int _numThreads;
-        #endregion
-        private VocubWord[] _vocab;
+		#endregion
+
+		#region IJUNG CHANGE PARAMS
+		//private int MaxSentenceLength = 1000;
+		private int _window;
+		#endregion
+		private VocubWord[] _vocab;
         private int _minReduce = 1;
         private readonly int[] _vocabHash;
         private int _vocabMaxSize = 1000;
@@ -56,8 +61,10 @@ namespace Word2Vec.Net
         private readonly int _negative;
         private const int TableSize = (int) 1e8;
         private int[] _table;
+		private Int32 _ijungCustermazing;
 
-        internal Word2Vec(
+
+		internal Word2Vec(
             string trainFileName,
             string outPutfileName,
             string saveVocabFileName,
@@ -74,8 +81,9 @@ namespace Word2Vec.Net
             long iter,
             int minCount,
             long classes,
-            int window
-            )
+            int window,
+			Int32 ijungCustermazing
+			)
         {
             _trainFile = trainFileName;
             _outputFile = outPutfileName;
@@ -102,7 +110,9 @@ namespace Word2Vec.Net
             _minCount = minCount;
             _classes = classes;
             _window = window;
-        }
+			_ijungCustermazing = ijungCustermazing;
+
+		}
 
         private void InitUnigramTable()
         {
@@ -490,20 +500,28 @@ namespace Word2Vec.Net
                     long word;
                     if (sentenceLength == 0)
                     {
-                        string line;
+						#region IJUNG CUSTERMAZING
+						Boolean endOfStream = false;
+						if (fi.EndOfStream || (wordCount > _trainWords/_numThreads))
+                        {
+							endOfStream = true;
+                        }
+						#endregion
+						string line;
                         bool loopEnd = false;
-                        while (!loopEnd && (line = fi.ReadLine()) != null)
+						if (_ijungCustermazing > 0)
+						{
+							sen = new Int64[MaxSentenceLength];
+						}
+						while (!endOfStream && !loopEnd && (line = fi.ReadLine()) != null)
                         {
                             string[] words = splitRegex.Split(line);
-                            foreach (var s in words)
+
+
+							foreach (var s in words)
                         {
                                 word = SearchVocab(s);
-                                if (fi.EndOfStream)
-                            {
-                                    loopEnd = true;
-                                    break;
-                                }
-                                if (word == -1) continue;
+								if (word == -1) continue;
                                 wordCount++;
                                 if (word == 0)
                                 {
@@ -526,22 +544,57 @@ namespace Word2Vec.Net
                                     break;
                                 }
                                 }
+							#region IJUNG CUSTOMIZING CBOW
+							if (_ijungCustermazing > 0)
+							{
+								if(sentenceLength < 2)
+								{
+									wordCount -= sentenceLength;
+									if (fi.EndOfStream || (wordCount > _trainWords / _numThreads))
+									{
+										endOfStream = true;
+										break;
+									}
+									sentencePosition = 0;
+									sentenceLength = 0;
+									continue;
+								}
+								Array.Resize<Int64>(ref sen, (Int32)sentenceLength);
+								break;
+							}
+							#endregion
 
-                            }
-                        sentencePosition = 0;
+						}
+						sentencePosition = 0;
+
+						if (endOfStream)
+						{
+							_wordCountActual += wordCount - lastWordCount;
+							localIter--;
+							if (localIter == 0) break;
+							wordCount = 0;
+							lastWordCount = 0;
+							sentenceLength = 0;
+							fi.BaseStream.Seek(_fileSize / _numThreads * id, SeekOrigin.Begin);
+							continue;
+						}
+
+						
                         }
-                    if (fi.EndOfStream || (wordCount > _trainWords/_numThreads))
-                        {
-                        _wordCountActual += wordCount - lastWordCount;
-                        localIter--;
-                        if (localIter == 0) break;
-                        wordCount = 0;
-                        lastWordCount = 0;
-                        sentenceLength = 0;
-                        fi.BaseStream.Seek(_fileSize/_numThreads*id, SeekOrigin.Begin);
-                            continue;
-                        }
-                    word = sen[sentencePosition];
+					#region IJUNG CUSTERMAZING
+					//if (fi.EndOfStream || (wordCount > _trainWords/_numThreads))
+					//    {
+					//    _wordCountActual += wordCount - lastWordCount;
+					//    localIter--;
+					//    if (localIter == 0) break;
+					//    wordCount = 0;
+					//    lastWordCount = 0;
+					//    sentenceLength = 0;
+					//    fi.BaseStream.Seek(_fileSize/_numThreads*id, SeekOrigin.Begin);
+					//        continue;
+					//    }
+					#endregion
+					word = sen[sentencePosition];
                         if (word == -1) continue;
                     long c;
                         for (c = 0; c < _layer1Size; c++) neu1[c] = 0;
@@ -554,146 +607,187 @@ namespace Word2Vec.Net
                     float f;
                     long target;
                     long l2;
-                        if (_cbow > 0)
-                        {
-                            //train the cbow architecture
-                            // in -> hidden
-                        long cw = 0;
-                        for (var a = b; a < _window*2 + 1 - b; a++)
-                                if (a != _window)
-                                {
-                                c = sentencePosition - _window + a;
-                                    if (c < 0) continue;
-                                if (c >= sentenceLength) continue;
-                                lastWord = sen[c];
-                                if (lastWord == -1) continue;
-                                for (c = 0; c < _layer1Size; c++) neu1[c] += _syn0[c + lastWord*_layer1Size];
-                                    cw++;
-                                }
-                            if (cw > 0)
-                            {
-                                for (c = 0; c < _layer1Size; c++) neu1[c] /= cw;
-                                if (_hs > 0)
-                                    for (d = 0; d < _vocab[word].CodeLen; d++)
-                                    {
-                                        f = 0;
-                                        l2 = _vocab[word].Point[d]*_layer1Size;
-                                        // Propagate hidden -> output
-                                        for (c = 0; c < _layer1Size; c++) f += neu1[c]*_syn1[c + l2];
-                                    if (f <= MaxExp*-1) continue;
-                                    if (f >= MaxExp) continue;
-                                    f = _expTable[(int) ((f + MaxExp)*(ExpTableSize/MaxExp/2))];
-                                        // 'g' is the gradient multiplied by the learning rate
-                                        g = (1 - _vocab[word].Code[d] - f)*_alpha;
-                                        // Propagate errors output -> hidden
-                                        for (c = 0; c < _layer1Size; c++) neu1e[c] += g*_syn1[c + l2];
-                                        // Learn weights hidden -> output
-                                        for (c = 0; c < _layer1Size; c++) _syn1[c + l2] += g*neu1[c];
-                                    }
-                                // NEGATIVE SAMPLING
-                                if (_negative > 0)
-                                    for (d = 0; d < _negative + 1; d++)
-                                    {
-                                        if (d == 0)
-                                        {
-                                            target = word;
-                                            label = 1;
-                                        }
-                                        else
-                                        {
-                                        nextRandom = nextRandom*25214903917 + 11;
-                                        target = _table[(nextRandom >> 16)%TableSize];
-                                        if (target == 0) target = (long) (nextRandom%(ulong) (_vocabSize - 1) + 1);
-                                            if (target == word) continue;
-                                            label = 0;
-                                        }
-                                        l2 = target*_layer1Size;
-                                        f = 0;
-                                        for (c = 0; c < _layer1Size; c++) f += neu1[c]*_syn1Neg[c + l2];
-                                    if (f > MaxExp) g = (label - 1)*_alpha;
-                                    else if (f < MaxExp*-1) g = (label - 0)*_alpha;
-                                        else
-                                        g = (label - _expTable[(int) ((f + MaxExp)*(ExpTableSize/MaxExp/2))])*_alpha;
-                                        for (c = 0; c < _layer1Size; c++) neu1e[c] += g*_syn1Neg[c + l2];
-                                        for (c = 0; c < _layer1Size; c++) _syn1Neg[c + l2] += g*neu1[c];
-                                    }
-                                // hidden -> in
-                            for (var a = b; a < _window*2 + 1 - b; a++)
-                                    if (a != _window)
-                                    {
-                                    c = sentencePosition - _window + a;
-                                        if (c < 0) continue;
-                                    if (c >= sentenceLength) continue;
-                                    lastWord = sen[c];
-                                    if (lastWord == -1) continue;
-                                    for (c = 0; c < _layer1Size; c++) _syn0[c + lastWord*_layer1Size] += neu1e[c];
-                                    }
-                            }
-                        }
-                        else
-                        {
-                            //train skip-gram
-                        for (var a = b; a < _window*2 + 1 - b; a++)
-                                if (a != _window)
-                                {
-                                c = sentencePosition - _window + a;
-                                    if (c < 0) continue;
-                                if (c >= sentenceLength) continue;
-                                lastWord = sen[c];
-                                if (lastWord == -1) continue;
-                                var l1 = lastWord*_layer1Size;
-                                    for (c = 0; c < _layer1Size; c++) neu1e[c] = 0;
-                                    // HIERARCHICAL SOFTMAX
-                                    if (_hs != 0)
-                                        for (d = 0; d < _vocab[word].CodeLen; d++)
-                                        {
-                                            f = 0;
-                                            l2 = _vocab[word].Point[d]*_layer1Size;
-                                            // Propagate hidden -> output
-                                            for (c = 0; c < _layer1Size; c++) f += _syn0[c + l1]*_syn1[c + l2];
-                                        if (f <= MaxExp*-1) continue;
-                                        if (f >= MaxExp) continue;
-                                        f = _expTable[(int) ((f + MaxExp)*(ExpTableSize/MaxExp/2))];
-                                            // 'g' is the gradient multiplied by the learning rate
-                                            g = (1 - _vocab[word].Code[d] - f)*_alpha;
-                                            // Propagate errors output -> hidden
-                                            for (c = 0; c < _layer1Size; c++) neu1e[c] += g*_syn1[c + l2];
-                                            // Learn weights hidden -> output
-                                            for (c = 0; c < _layer1Size; c++) _syn1[c + l2] += g*_syn0[c + l1];
-                                        }
-                                    // NEGATIVE SAMPLING
-                                    if (_negative > 0)
-                                        for (d = 0; d < _negative + 1; d++)
-                                        {
-                                            if (d == 0)
-                                            {
-                                                target = word;
-                                                label = 1;
-                                            }
-                                            else
-                                            {
-                                            nextRandom = nextRandom*25214903917 + 11;
-                                            target = _table[(nextRandom >> 16)%TableSize];
-                                            if (target == 0) target = (long) (nextRandom%(ulong) (_vocabSize - 1) + 1);
-                                                if (target == word) continue;
-                                                label = 0;
-                                            }
-                                            l2 = target*_layer1Size;
-                                            f = 0;
-                                            for (c = 0; c < _layer1Size; c++) f += _syn0[c + l1]*_syn1Neg[c + l2];
-                                        if (f > MaxExp) g = (label - 1)*_alpha;
-                                        else if (f < MaxExp*-1) g = (label - 0)*_alpha;
-                                            else
-                                            g = (label - _expTable[(int) ((f + MaxExp)*(ExpTableSize/MaxExp/2))])*
-                                                    _alpha;
-                                            for (c = 0; c < _layer1Size; c++) neu1e[c] += g*_syn1Neg[c + l2];
-                                            for (c = 0; c < _layer1Size; c++) _syn1Neg[c + l2] += g*_syn0[c + l1];
-                                        }
-                                    // Learn weights input -> hidden
-                                    for (c = 0; c < _layer1Size; c++) _syn0[c + l1] += neu1e[c];
-                                }
-                        }
-                    sentencePosition++;
+					#region IJUNG CUSTOMIZING CBOW
+					if (_ijungCustermazing > 0)
+					{
+						b = 0;
+						_window = (Int32)sentenceLength;
+					}
+					#endregion
+
+					if (_cbow > 0)
+					{
+						//train the cbow architecture
+						// in -> hidden
+						long cw = 0;
+
+						for (var a = b; a < _window * 2 + 1 - b; a++)
+							if (a != _window)
+							{
+								#region [INIT]
+								c = sentencePosition - _window + a;
+								if (c < 0) continue;
+								if (c >= sentenceLength) continue;
+								lastWord = sen[c];
+								if (lastWord == -1) continue;
+								#endregion
+								for (c = 0; c < _layer1Size; c++) neu1[c] += _syn0[c + lastWord * _layer1Size];
+								cw++;
+							}
+						if (cw > 0)
+						{
+							for (c = 0; c < _layer1Size; c++) neu1[c] /= cw;
+							#region [HIERARCHICAL SOFTMAX]
+							// HIERARCHICAL SOFTMAX
+							if (_hs > 0)
+								for (d = 0; d < _vocab[word].CodeLen; d++)
+								{
+									f = 0;
+									l2 = _vocab[word].Point[d] * _layer1Size;
+									// Propagate hidden -> output
+									for (c = 0; c < _layer1Size; c++) f += neu1[c] * _syn1[c + l2];
+									if (f <= MaxExp * -1) continue;
+									if (f >= MaxExp) continue;
+									f = _expTable[(int)((f + MaxExp) * (ExpTableSize / MaxExp / 2))];
+									// 'g' is the gradient multiplied by the learning rate
+									g = (1 - _vocab[word].Code[d] - f) * _alpha;
+									// Propagate errors output -> hidden
+									for (c = 0; c < _layer1Size; c++) neu1e[c] += g * _syn1[c + l2];
+									// Learn weights hidden -> output
+									for (c = 0; c < _layer1Size; c++) _syn1[c + l2] += g * neu1[c];
+								}
+							#endregion
+							#region [NEGATIVE SAMPLING]
+							// NEGATIVE SAMPLING
+							if (_negative > 0)
+								for (d = 0; d < _negative + 1; d++)
+								{
+									if (d == 0)
+									{
+										target = word;
+										label = 1;
+									}
+									else
+									{
+										nextRandom = nextRandom * 25214903917 + 11;
+										target = _table[(nextRandom >> 16) % TableSize];
+										if (target == 0) target = (long)(nextRandom % (ulong)(_vocabSize - 1) + 1);
+										if (target == word) continue;
+										label = 0;
+									}
+									l2 = target * _layer1Size;
+									f = 0;
+									for (c = 0; c < _layer1Size; c++) f += neu1[c] * _syn1Neg[c + l2];
+									if (f > MaxExp) g = (label - 1) * _alpha;
+									else if (f < MaxExp * -1) g = (label - 0) * _alpha;
+									else
+										g = (label - _expTable[(int)((f + MaxExp) * (ExpTableSize / MaxExp / 2))]) * _alpha;
+									for (c = 0; c < _layer1Size; c++) neu1e[c] += g * _syn1Neg[c + l2];
+									for (c = 0; c < _layer1Size; c++) _syn1Neg[c + l2] += g * neu1[c];
+								}
+							#endregion
+							#region [hidden -> in]
+							// hidden -> in
+							for (var a = b; a < _window * 2 + 1 - b; a++)
+								if (a != _window)
+								{
+									c = sentencePosition - _window + a;
+									if (c < 0) continue;
+									if (c >= sentenceLength) continue;
+									lastWord = sen[c];
+									if (lastWord == -1) continue;
+									for (c = 0; c < _layer1Size; c++) _syn0[c + lastWord * _layer1Size] += neu1e[c];
+								}
+							#endregion
+						}
+					}
+					#region [skip-gram]
+					else
+					{
+						//train skip-gram
+						for (var a = b; a < _window * 2 + 1 - b; a++)
+						{
+							if (a != _window)
+							{
+								#region [INIT]
+								c = sentencePosition - _window + a;
+								if (c < 0) continue;
+								if (c >= sentenceLength) continue;
+								lastWord = sen[c];
+								if (lastWord == -1) continue;
+
+								// 현재 Word의 Vactor 값들의 위치
+								var l1 = lastWord * _layer1Size;
+								for (c = 0; c < _layer1Size; c++)
+								{
+									neu1e[c] = 0;
+								}
+								#endregion
+
+								#region [HIERARCHICAL SOFTMAX]
+								// HIERARCHICAL SOFTMAX
+								if (_hs != 0)
+								{
+									for (d = 0; d < _vocab[word].CodeLen; d++)
+									{
+										f = 0;
+										l2 = _vocab[word].Point[d] * _layer1Size;
+										// Propagate hidden -> output
+										for (c = 0; c < _layer1Size; c++) f += _syn0[c + l1] * _syn1[c + l2];
+										if (f <= MaxExp * -1) continue;
+										if (f >= MaxExp) continue;
+										f = _expTable[(int)((f + MaxExp) * (ExpTableSize / MaxExp / 2))];
+										// 'g' is the gradient multiplied by the learning rate
+										g = (1 - _vocab[word].Code[d] - f) * _alpha;
+										// Propagate errors output -> hidden
+										for (c = 0; c < _layer1Size; c++) neu1e[c] += g * _syn1[c + l2];
+										// Learn weights hidden -> output
+										for (c = 0; c < _layer1Size; c++) _syn1[c + l2] += g * _syn0[c + l1];
+									}
+								}
+								#endregion
+
+								#region [NEGATIVE SAMPLING]
+								// NEGATIVE SAMPLING
+								if (_negative > 0)
+								{
+									for (d = 0; d < _negative + 1; d++)
+									{
+										if (d == 0)
+										{
+											target = word;
+											label = 1;
+										}
+										else
+										{
+											nextRandom = nextRandom * 25214903917 + 11;
+											target = _table[(nextRandom >> 16) % TableSize];
+											if (target == 0) target = (long)(nextRandom % (ulong)(_vocabSize - 1) + 1);
+											if (target == word) continue;
+											label = 0;
+										}
+										l2 = target * _layer1Size;
+										f = 0;
+										for (c = 0; c < _layer1Size; c++) f += _syn0[c + l1] * _syn1Neg[c + l2];
+										if (f > MaxExp) g = (label - 1) * _alpha;
+										else if (f < MaxExp * -1) g = (label - 0) * _alpha;
+										else
+											g = (label - _expTable[(int)((f + MaxExp) * (ExpTableSize / MaxExp / 2))]) *
+													_alpha;
+										for (c = 0; c < _layer1Size; c++) neu1e[c] += g * _syn1Neg[c + l2];
+										for (c = 0; c < _layer1Size; c++) _syn1Neg[c + l2] += g * _syn0[c + l1];
+									}
+								}
+								#endregion
+
+								// Learn weights input -> hidden
+								for (c = 0; c < _layer1Size; c++) _syn0[c + l1] += neu1e[c];
+							}
+						}
+					}
+					#endregion
+					sentencePosition++;
+
                     if (sentencePosition >= sentenceLength)
                         {
                         sentenceLength = 0;
@@ -715,9 +809,11 @@ namespace Word2Vec.Net
         /// </summary>
         public void TrainModel()
         {
-            long d;
+
+				long d;
             Console.WriteLine("Starting training using file {0}\n", _trainFile);
-            _startingAlpha = _alpha;
+
+				_startingAlpha = _alpha;
             if (!string.IsNullOrEmpty(_readVocabFile))
                 ReadVocab();
             else
@@ -732,11 +828,13 @@ namespace Word2Vec.Net
             {
                 MaxDegreeOfParallelism = _numThreads
             };
-            var result = Parallel.For(0, _numThreads, parallelOptions, TrainModelThreadStart);
-            if (!result.IsCompleted)
-            {
-                throw new InvalidOperationException();
-            }
+				var result = Parallel.For(0, _numThreads, parallelOptions, TrainModelThreadStart);
+				if (!result.IsCompleted)
+				{
+					throw new InvalidOperationException();
+				}
+				Console.WriteLine();
+
             //TrainModelThreadStart(1);
             using (var stream = new FileStream(_outputFile, FileMode.Create, FileAccess.Write))
             {

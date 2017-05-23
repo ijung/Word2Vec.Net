@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -27,7 +28,9 @@ namespace Word2Vec.Net
         private int _negative = 5;
         private int _window = 5;
 
-        private Word2VecBuilder()
+		private Int32 _ijungCustermazing = 1;
+
+		private Word2VecBuilder()
         {
         }
 
@@ -134,7 +137,13 @@ namespace Word2Vec.Net
             return this;
         }
 
-        public Word2Vec Build()
+		public Word2VecBuilder WithIJungCustermazing(Int32 ijungCustermazing)
+		{
+			this._ijungCustermazing = ijungCustermazing;
+			return this;
+		}
+
+		public Word2Vec Build()
         {
             return new Word2Vec(
                 _trainFile,
@@ -153,8 +162,9 @@ namespace Word2Vec.Net
                 _iter,
                 _minCount,
                 _classes,
-                _window
-                );
+                _window,
+				_ijungCustermazing
+				);
         }
     }
 }
